@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>body { font-family: 'Plus Jakarta Sans', sans-serif; }</style>
+</head>
+<body class="bg-slate-100 p-6 min-h-screen">
+  <div class="max-w-5xl mx-auto grid grid-cols-12 gap-5">
+
+    <!-- Top 10 Notifications Widget (Left 7 Cols) -->
+    <div class="col-span-7 bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div class="flex items-center gap-2">
+          <span class="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center font-bold">🔔</span>
+          <div>
+            <h4 class="font-bold text-sm text-slate-900">Thông Báo Mới Nhất (Top 10)</h4>
+            <span class="text-[11px] text-slate-500">Nhà trường & Cấp trên AIG</span>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700">3 Chưa đọc</span>
+          <a href="#" class="text-xs font-semibold text-sky-600 hover:underline">Xem tất cả →</a>
+        </div>
+      </div>
+
+      <!-- Item 1 (Pinned / Urgent) -->
+      <div class="p-3 rounded-xl bg-rose-50/60 border border-rose-200 flex items-start justify-between gap-3 cursor-pointer hover:bg-rose-50 transition">
+        <div class="space-y-1">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-600 text-white">📌 Ghim • Khẩn cấp</span>
+            <span class="w-2 h-2 rounded-full bg-rose-600"></span>
+            <span class="text-xs font-bold text-slate-900">Lịch Bảo Trì Hạ Tầng Đám Mây Toàn Hệ Thống</span>
+          </div>
+          <p class="text-[11px] text-slate-600 line-clamp-1">Hệ thống sẽ tạm gián đoạn từ 23:00 thứ 7 đến 02:00 chủ nhật để nâng cấp băng thông...</p>
+        </div>
+        <span class="text-[10px] text-slate-400 shrink-0 font-medium">10 phút trước</span>
+      </div>
+
+      <!-- Item 2 (Academic) -->
+      <div class="p-3 rounded-xl bg-white border border-slate-200 flex items-start justify-between gap-3 cursor-pointer hover:bg-slate-50 transition">
+        <div class="space-y-1">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">Học vụ</span>
+            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <span class="text-xs font-bold text-slate-900">Phát Hành Bộ Học Liệu STEM Khối 6 Học Kỳ 2</span>
+          </div>
+          <p class="text-[11px] text-slate-500 line-clamp-1">Đã bổ sung 15 video bài giảng mới về chủ đề Robotics và Cảm biến...</p>
+        </div>
+        <span class="text-[10px] text-slate-400 shrink-0 font-medium">2 giờ trước</span>
+      </div>
+
+      <!-- Item 3 (System) -->
+      <div class="p-3 rounded-xl bg-white border border-slate-200 flex items-start justify-between gap-3 cursor-pointer hover:bg-slate-50 transition">
+        <div class="space-y-1">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-sky-100 text-sky-800 border border-sky-200">Hệ thống</span>
+            <span class="text-xs font-semibold text-slate-700">Hướng Dẫn Sử Dụng Chức Năng Đếm Giờ Dạy Học</span>
+          </div>
+          <p class="text-[11px] text-slate-400 line-clamp-1">Tài liệu chi tiết về cơ chế Heartbeat chống gian lận và quy tắc tạm dừng khi ẩn tab...</p>
+        </div>
+        <span class="text-[10px] text-slate-400 shrink-0 font-medium">Hôm qua</span>
+      </div>
+    </div>
+
+    <!-- Right Drawer Preview (Right 5 Cols) -->
+    <div class="col-span-5 bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4 flex flex-col justify-between">
+      <div>
+        <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+          <span class="text-xs font-bold uppercase text-slate-500">Drawer Đọc Nhanh Nội Dung</span>
+          <button class="text-xs font-semibold text-sky-600">✓ Đã đọc</button>
+        </div>
+        <div class="pt-3 space-y-2">
+          <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700">Khẩn Cấp</span>
+          <h5 class="font-bold text-sm text-slate-900 leading-snug">Lịch Bảo Trì Hạ Tầng Đám Mây Toàn Hệ Thống</h5>
+          <div class="text-[11px] text-slate-400">Phát hành bởi: Ban Quản Trị AIG • 26/10/2026 09:30</div>
+          <p class="text-xs text-slate-600 leading-relaxed pt-2">
+            Kính gửi Quý Thầy/Cô và Ban Giám Hiệu,<br>
+            Nhằm nâng cao hiệu năng hệ thống và mở rộng dung lượng lưu trữ video học liệu, Ban kỹ thuật sẽ tiến hành bảo trì định kỳ...
+          </p>
+        </div>
+      </div>
+      <div class="pt-3 border-t border-slate-100 flex items-center justify-between">
+        <button class="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50">Tải tệp đính kèm (PDF)</button>
+        <button class="px-3 py-1.5 rounded-lg bg-sky-600 text-white text-xs font-semibold hover:bg-sky-500">Đóng Ngăn Kéo</button>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
