@@ -1,9 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Play,
   Square,
-  Download,
-  Upload,
   RotateCcw,
   Plus,
   Trash2,
@@ -17,18 +15,22 @@ import {
   BarChart3,
   FileSpreadsheet,
   Timer,
-  ChevronRight,
   Sparkles,
+  Layers,
+  StopCircle,
+  Download,
+  Upload,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { computeRenderStats, generateSmartSuggestions } from './utils/analysisEngine'
 import { exportToExcel, formatDateTime } from './utils/excelExporter'
 
-// Dữ liệu ban đầu 15 dòng chuẩn theo template HK RENDER TIME LOGGER
+// Tạo danh sách ban đầu 15 dòng với nhãn Tiến trình A, B, C... hoặc File_01
 function createInitialRecords() {
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
   return Array.from({ length: 15 }, (_, i) => ({
     id: i + 1,
-    fileName: `File_${String(i + 1).padStart(2, '0')}`,
+    fileName: i < letters.length ? `Tiến trình ${letters[i]}` : `Tiến trình ${i + 1}`,
     startTime: null,
     endTime: null,
     duration: null,
@@ -36,217 +38,237 @@ function createInitialRecords() {
   }))
 }
 
-// Dữ liệu mẫu demo trực quan
-function getDemoRecords() {
+// Dữ liệu mẫu demo đa luồng
+function getMultiThreadDemo() {
+  const base = createInitialRecords()
   const now = Date.now()
-  const samples = [
-    { duration: 24.5, note: 'Intro Scene - 1080p 60fps' },
-    { duration: 32.1, note: 'Motion Graphic Title 3D' },
-    { duration: 28.0, note: 'Lower third & VFX' },
-    { duration: 115.4, note: '4K Footage + Heavy Color Grading (Bottleneck)' },
-    { duration: 35.8, note: 'Interview Cam A' },
-    { duration: 38.2, note: 'Interview Cam B' },
-    { duration: 42.0, note: 'Audio reactive visualizer' },
-    { duration: 29.5, note: 'Outro Scene & Credits' },
-  ]
+  // Tiến trình A: bắt đầu 45s trước, đang chạy
+  base[0].startTime = new Date(now - 45200).toISOString()
+  base[0].note = 'Render cảnh 3D phòng khách'
 
-  const records = createInitialRecords()
-  let currTime = now - 600000 // 10 phút trước
+  // Tiến trình B: bắt đầu 30s trước, đã dừng mất 24.5s
+  base[1].startTime = new Date(now - 30000).toISOString()
+  base[1].endTime = new Date(now - 5500).toISOString()
+  base[1].duration = 24.5
+  base[1].note = 'Intro Motion Graphic 60fps'
 
-  samples.forEach((sample, idx) => {
-    const start = new Date(currTime)
-    const end = new Date(currTime + sample.duration * 1000)
-    records[idx] = {
-      id: idx + 1,
-      fileName: `File_${String(idx + 1).padStart(2, '0')}`,
-      startTime: start.toISOString(),
-      endTime: end.toISOString(),
-      duration: sample.duration,
-      note: sample.note,
-    }
-    currTime += (sample.duration + 15) * 1000
-  })
+  // Tiến trình C: bắt đầu 18s trước, đang chạy
+  base[2].startTime = new Date(now - 18400).toISOString()
+  base[2].note = 'Color Grading Rec709 4K'
 
-  return records
+  // Tiến trình D: đã hoàn tất trước đó mất 58.2s
+  base[3].startTime = new Date(now - 90000).toISOString()
+  base[3].endTime = new Date(now - 31800).toISOString()
+  base[3].duration = 58.2
+  base[3].note = 'Audio Visualizer Waveform'
+
+  return base
 }
 
 export default function App() {
   const [records, setRecords] = useState(() => {
     try {
-      const saved = localStorage.getItem('hk_render_records')
+      const saved = localStorage.getItem('hk_render_records_multithread')
       return saved ? JSON.parse(saved) : createInitialRecords()
     } catch {
       return createInitialRecords()
     }
   })
 
-  // Trạng thái live render
-  const [activeId, setActiveId] = useState(null)
-  const [liveDuration, setLiveDuration] = useState(0)
-  const [quickFileName, setQuickFileName] = useState('')
-  const [quickNote, setQuickNote] = useState('')
+  // Timer cập nhật thời gian thực cho TẤT CẢ các tiến trình đang chạy
+  const [nowMs, setNowMs] = useState(Date.now())
+  const [newProcName, setNewProcName] = useState('')
+  const [newProcNote, setNewProcNote] = useState('')
   const [showVbaGuide, setShowVbaGuide] = useState(false)
-  const [activeTab, setActiveTab] = useState('dashboard') // dashboard | table | analytics
+  const fileInputRef = useRef(null)
 
-  // Lưu localStorage khi có thay đổi
+  // Lưu localStorage mỗi khi thay đổi
   useEffect(() => {
     try {
-      localStorage.setItem('hk_render_records', JSON.stringify(records))
+      localStorage.setItem('hk_render_records_multithread', JSON.stringify(records))
     } catch (e) {
-      console.error('Failed to save to localStorage', e)
+      console.error('Failed to save', e)
     }
   }, [records])
 
-  // Timer chạy theo thời gian thực (update mỗi 100ms)
-  useEffect(() => {
-    let interval = null
-    if (activeId !== null) {
-      const activeRecord = records.find((r) => r.id === activeId)
-      if (activeRecord && activeRecord.startTime) {
-        const startMs = new Date(activeRecord.startTime).getTime()
-        interval = setInterval(() => {
-          const nowMs = Date.now()
-          const diffSec = Math.max(0, (nowMs - startMs) / 1000)
-          setLiveDuration(Number(diffSec.toFixed(1)))
-        }, 100)
-      }
-    } else {
-      setLiveDuration(0)
-    }
-    return () => {
-      if (interval) clearInterval(interval)
-    }
-  }, [activeId, records])
+  // Danh sách các tiến trình ĐANG CHẠY (startTime có và endTime chưa có)
+  const activeProcesses = useMemo(() => {
+    return records.filter((r) => r.startTime && !r.endTime)
+  }, [records])
 
-  // Thống kê & Phân tích thông minh
+  // Cập nhật đồng hồ mỗi 100ms khi có ít nhất 1 tiến trình đang chạy
+  useEffect(() => {
+    if (activeProcesses.length === 0) return
+    const interval = setInterval(() => {
+      setNowMs(Date.now())
+    }, 100)
+    return () => clearInterval(interval)
+  }, [activeProcesses.length])
+
+  // Tính số giây chạy trực tiếp cho 1 record
+  const getElapsedSeconds = (r) => {
+    if (!r.startTime) return 0
+    if (r.duration !== null && r.duration !== undefined) return r.duration
+    const start = new Date(r.startTime).getTime()
+    return Number(Math.max(0, (nowMs - start) / 1000).toFixed(1))
+  }
+
+  // Định dạng hiển thị đồng hồ mm:ss.s
+  const formatTimerClock = (seconds) => {
+    const totalSec = Math.floor(seconds)
+    const ms = Math.floor((seconds - totalSec) * 10)
+    const m = Math.floor(totalSec / 60)
+    const s = totalSec % 60
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${ms}`
+  }
+
+  // Thống kê & Đề xuất
   const stats = computeRenderStats(records)
   const suggestions = generateSmartSuggestions(records, stats)
 
-  // Tìm STT kế tiếp cần render
-  const nextTarget = records.find((r) => !r.startTime && !r.endTime)
-  const currentRunning = records.find((r) => r.id === activeId)
-
-  // BẮT ĐẦU RENDER (Click lần đầu)
-  const handleStart = (targetId) => {
-    const idToStart = targetId || (nextTarget ? nextTarget.id : records.length + 1)
-
-    const nowIso = new Date().toISOString()
-    setRecords((prev) => {
-      const exists = prev.some((r) => r.id === idToStart)
-      if (exists) {
-        return prev.map((r) =>
-          r.id === idToStart
-            ? {
-                ...r,
-                startTime: nowIso,
-                endTime: null,
-                duration: null,
-                fileName: quickFileName.trim() || r.fileName,
-                note: quickNote.trim() || r.note,
-              }
-            : r
-        )
-      } else {
-        return [
-          ...prev,
-          {
-            id: idToStart,
-            fileName: quickFileName.trim() || `File_${String(idToStart).padStart(2, '0')}`,
-            startTime: nowIso,
-            endTime: null,
-            duration: null,
-            note: quickNote.trim(),
-          },
-        ]
-      }
-    })
-
-    setActiveId(idToStart)
-    setLiveDuration(0)
-  }
-
-  // KẾT THÚC RENDER (Click lần sau)
-  const handleStop = (targetId) => {
-    const idToStop = targetId || activeId
-    if (!idToStop) return
-
+  // START 1 TIẾN TRÌNH CỤ THỂ
+  const handleStartProcess = (id) => {
     const nowIso = new Date().toISOString()
     setRecords((prev) =>
+      prev.map((r) =>
+        r.id === id
+          ? {
+              ...r,
+              startTime: nowIso,
+              endTime: null,
+              duration: null,
+            }
+          : r
+      )
+    )
+  }
+
+  // STOP 1 TIẾN TRÌNH CỤ THỂ
+  const handleStopProcess = (id) => {
+    const nowIso = new Date().toISOString()
+    const stopMs = new Date(nowIso).getTime()
+
+    setRecords((prev) =>
       prev.map((r) => {
-        if (r.id === idToStop && r.startTime) {
+        if (r.id === id && r.startTime && !r.endTime) {
           const startMs = new Date(r.startTime).getTime()
-          const endMs = new Date(nowIso).getTime()
-          const durSec = Number(Math.max(0, (endMs - startMs) / 1000).toFixed(1))
+          const dur = Number(Math.max(0, (stopMs - startMs) / 1000).toFixed(1))
           return {
             ...r,
             endTime: nowIso,
-            duration: durSec,
+            duration: dur,
           }
         }
         return r
       })
     )
 
-    setActiveId(null)
-    setLiveDuration(0)
-    setQuickFileName('')
-    setQuickNote('')
-
-    // Bắn pháo hoa nhỏ ăn mừng hoàn thành
     try {
       confetti({
-        particleCount: 45,
-        spread: 60,
-        origin: { y: 0.7 },
-        colors: ['#10B981', '#3B82F6', '#8B5CF6'],
+        particleCount: 35,
+        spread: 55,
+        origin: { y: 0.75 },
+        colors: ['#10B981', '#3B82F6', '#EC4899'],
       })
     } catch {}
   }
 
-  // Phím tắt Spacebar để Start / Stop
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      // Tránh kích hoạt khi người dùng đang gõ trong input / textarea
-      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
+  // START TIẾN TRÌNH MỚI (Từ Hero Bar)
+  const handleStartNextAvailable = () => {
+    const firstIdle = records.find((r) => !r.startTime && !r.endTime)
+    const nowIso = new Date().toISOString()
 
-      if (e.code === 'Space') {
-        e.preventDefault()
-        if (activeId !== null) {
-          handleStop()
-        } else {
-          handleStart()
-        }
-      }
+    if (firstIdle) {
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === firstIdle.id
+            ? {
+                ...r,
+                fileName: newProcName.trim() || r.fileName,
+                note: newProcNote.trim() || r.note,
+                startTime: nowIso,
+                endTime: null,
+                duration: null,
+              }
+            : r
+        )
+      )
+    } else {
+      // Nếu hết chỗ, tự thêm 1 dòng mới và Start luôn
+      const newId = records.length > 0 ? Math.max(...records.map((r) => r.id)) + 1 : 1
+      setRecords((prev) => [
+        ...prev,
+        {
+          id: newId,
+          fileName: newProcName.trim() || `Tiến trình ${newId}`,
+          note: newProcNote.trim(),
+          startTime: nowIso,
+          endTime: null,
+          duration: null,
+        },
+      ])
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeId, nextTarget, quickFileName, quickNote])
 
-  // Reset hàng cụ thể
+    setNewProcName('')
+    setNewProcNote('')
+  }
+
+  // DỪNG TẤT CẢ TIẾN TRÌNH ĐANG CHẠY
+  const handleStopAllActive = () => {
+    if (activeProcesses.length === 0) return
+    const nowIso = new Date().toISOString()
+    const stopMs = new Date(nowIso).getTime()
+
+    setRecords((prev) =>
+      prev.map((r) => {
+        if (r.startTime && !r.endTime) {
+          const startMs = new Date(r.startTime).getTime()
+          return {
+            ...r,
+            endTime: nowIso,
+            duration: Number(Math.max(0, (stopMs - startMs) / 1000).toFixed(1)),
+          }
+        }
+        return r
+      })
+    )
+  }
+
+  // KHỞI CHẠY TẤT CẢ CÁC TIẾN TRÌNH CHƯA CHẠY
+  const handleStartAllIdle = () => {
+    const nowIso = new Date().toISOString()
+    setRecords((prev) =>
+      prev.map((r) => (!r.startTime ? { ...r, startTime: nowIso, endTime: null, duration: null } : r))
+    )
+  }
+
+  // Đo lại dòng cụ thể
   const handleResetRow = (id) => {
-    if (activeId === id) setActiveId(null)
     setRecords((prev) =>
       prev.map((r) =>
-        r.id === id
-          ? { ...r, startTime: null, endTime: null, duration: null, note: '' }
-          : r
+        r.id === id ? { ...r, startTime: null, endTime: null, duration: null } : r
       )
     )
   }
 
-  // Xóa hàng
+  // Xóa dòng
   const handleDeleteRow = (id) => {
-    if (activeId === id) setActiveId(null)
     setRecords((prev) => prev.filter((r) => r.id !== id))
   }
 
-  // Thêm hàng mới
+  // Thêm dòng mới
   const handleAddRow = () => {
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    const newId = records.length > 0 ? Math.max(...records.map((r) => r.id)) + 1 : 1
+    const letterIdx = newId - 1
+    const defaultName =
+      letterIdx < letters.length ? `Tiến trình ${letters[letterIdx]}` : `Tiến trình ${newId}`
+
     setRecords((prev) => [
       ...prev,
       {
-        id: prev.length > 0 ? Math.max(...prev.map((r) => r.id)) + 1 : 1,
-        fileName: `File_${String(prev.length + 1).padStart(2, '0')}`,
+        id: newId,
+        fileName: defaultName,
         startTime: null,
         endTime: null,
         duration: null,
@@ -255,28 +277,25 @@ export default function App() {
     ])
   }
 
-  // Xóa tất cả (Reset về ban đầu)
+  // Xóa trắng
   const handleClearAll = () => {
-    if (window.confirm('Bạn có chắc chắn muốn xóa toàn bộ dữ liệu để bắt đầu phiên mới?')) {
-      setActiveId(null)
+    if (window.confirm('Bạn có chắc chắn muốn làm mới toàn bộ danh sách tiến trình?')) {
       setRecords(createInitialRecords())
-      localStorage.removeItem('hk_render_records')
+      localStorage.removeItem('hk_render_records_multithread')
     }
   }
 
   // Nạp dữ liệu mẫu
   const handleLoadDemo = () => {
-    setActiveId(null)
-    setRecords(getDemoRecords())
+    setRecords(getMultiThreadDemo())
   }
 
-  // Xuất file Excel
+  // Xuất Excel
   const handleExportExcel = async () => {
     await exportToExcel(records, stats, suggestions)
   }
 
-  // Nhập file CSV / Excel cơ bản
-  const fileInputRef = useRef(null)
+  // Nhập CSV
   const handleImportCSV = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -289,7 +308,6 @@ export default function App() {
         let stt = 1
         lines.forEach((line) => {
           const parts = line.split(',')
-          // Kiểm tra nếu là dòng dữ liệu STT là số
           if (parts[0] && !isNaN(parseInt(parts[0].trim()))) {
             const rowId = parseInt(parts[0].trim())
             const startTimeStr = parts[2]?.trim() || null
@@ -297,7 +315,7 @@ export default function App() {
             const durVal = parseFloat(parts[5]?.trim())
             parsed.push({
               id: rowId || stt++,
-              fileName: `File_${String(rowId || stt).padStart(2, '0')}`,
+              fileName: parts[6]?.startsWith('File:') ? parts[6].replace('File:', '').trim() : `Tiến trình ${rowId || stt}`,
               startTime: startTimeStr ? new Date().toISOString() : null,
               endTime: endTimeStr ? new Date().toISOString() : null,
               duration: !isNaN(durVal) ? durVal : null,
@@ -307,12 +325,10 @@ export default function App() {
         })
         if (parsed.length > 0) {
           setRecords(parsed)
-          alert(`Đã nhập thành công ${parsed.length} dòng dữ liệu!`)
-        } else {
-          alert('Không tìm thấy dòng dữ liệu hợp lệ trong file. Vui lòng kiểm tra định dạng.')
+          alert(`Đã nhập ${parsed.length} tiến trình thành công!`)
         }
       } catch (err) {
-        alert('Lỗi khi đọc file: ' + err.message)
+        alert('Lỗi nhập file: ' + err.message)
       }
     }
     reader.readAsText(file)
@@ -320,24 +336,24 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#090D16] text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
-      {/* Top Navigation */}
+      {/* Top Navbar */}
       <header className="border-b border-slate-800 bg-[#0F172A]/90 backdrop-blur sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <Timer className="w-6 h-6 text-white" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+              <Layers className="w-6 h-6 text-white" />
             </div>
             <div>
               <div className="flex items-center space-x-2">
                 <span className="font-extrabold tracking-wide text-lg bg-gradient-to-r from-blue-400 via-indigo-200 to-white bg-clip-text text-transparent">
                   HK RENDER TIME LOGGER
                 </span>
-                <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                  Web Edition
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/30">
+                  Đa Luồng Song Song
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Theo dõi thời gian render, phân tích tỉ lệ & đề xuất tối ưu hóa
+                Khởi chạy nhiều bộ đếm độc lập (A, B, C...) & Dừng riêng biệt theo thứ tự tùy ý
               </p>
             </div>
           </div>
@@ -346,16 +362,15 @@ export default function App() {
             <button
               onClick={handleLoadDemo}
               className="hidden sm:inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
-              title="Nạp dữ liệu giả lập để xem biểu đồ và đề xuất"
+              title="Xem mô phỏng tiến trình A, B, C chạy và dừng riêng biệt"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Dữ liệu Demo</span>
+              <span>Demo Đa Luồng</span>
             </button>
 
             <button
               onClick={() => fileInputRef.current?.click()}
               className="hidden sm:inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
-              title="Nhập dữ liệu từ file CSV"
             >
               <Upload className="w-3.5 h-3.5 text-slate-400" />
               <span>Nhập CSV</span>
@@ -370,8 +385,8 @@ export default function App() {
 
             <button
               onClick={handleClearAll}
-              className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-red-950/50 text-slate-300 hover:text-red-400 border border-slate-700 hover:border-red-800/40 transition"
-              title="Xóa trắng bảng để đo đợt mới"
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 hover:bg-red-950/50 text-slate-300 hover:text-red-400 border border-slate-700 transition"
+              title="Làm mới toàn bộ danh sách"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span className="hidden md:inline">Làm mới</span>
@@ -388,136 +403,131 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content Area */}
+      {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 space-y-6 w-full">
-        {/* HERO CONTROLLER: 1-Click Fast Render Timer */}
-        <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-b from-[#131B2E] to-[#0D1322] p-6 shadow-2xl">
-          <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
-          <div className="absolute bottom-0 left-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+        {/* HERO MULTI-PROCESS CONTROL PANEL */}
+        <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-b from-[#131B2E] via-[#0E1526] to-[#0A0F1D] p-5 shadow-2xl">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
 
-          <div className="relative z-10 flex flex-col lg:flex-row items-center justify-between gap-6">
-            {/* Cột trái: Bộ điều khiển Start/Stop nhanh */}
-            <div className="flex flex-col sm:flex-row items-center gap-6 w-full lg:w-auto">
-              {activeId !== null ? (
-                // NÚT KẾT THÚC (Click lần sau)
+          <div className="relative z-10 flex flex-col space-y-4">
+            {/* Hàng 1: Khởi chạy tiến trình mới */}
+            <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+              <div className="flex flex-col sm:flex-row items-center gap-3 flex-1">
+                <input
+                  type="text"
+                  placeholder="Tên tiến trình mới (VD: Tiến trình A, B, Scene 01...)"
+                  value={newProcName}
+                  onChange={(e) => setNewProcName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleStartNextAvailable()
+                  }}
+                  className="w-full sm:w-64 px-4 py-2.5 text-xs rounded-xl bg-slate-900/90 border border-slate-700 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                />
+                <input
+                  type="text"
+                  placeholder="Ghi chú (độ phân giải, effect...)"
+                  value={newProcNote}
+                  onChange={(e) => setNewProcNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleStartNextAvailable()
+                  }}
+                  className="w-full sm:w-80 px-4 py-2.5 text-xs rounded-xl bg-slate-900/90 border border-slate-700 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                />
                 <button
-                  onClick={() => handleStop()}
-                  className="group relative flex items-center justify-center space-x-3 w-full sm:w-72 h-20 rounded-2xl bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 hover:from-rose-500 hover:to-red-500 text-white font-bold text-lg shadow-xl shadow-rose-900/40 transition-all transform hover:scale-[1.02] active:scale-98 animate-pulse"
+                  onClick={handleStartNextAvailable}
+                  className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-950/40 transition-all transform active:scale-95 shrink-0"
                 >
-                  <Square className="w-7 h-7 fill-white" />
-                  <div className="text-left">
-                    <div className="text-xs uppercase tracking-wider text-rose-200">
-                      Đang Render File #{activeId}
-                    </div>
-                    <div className="text-xl font-extrabold">KẾT THÚC RENDER</div>
-                  </div>
+                  <Play className="w-4 h-4 fill-white" />
+                  <span>+ START TIẾN TRÌNH MỚI</span>
                 </button>
-              ) : (
-                // NÚT BẮT ĐẦU (Click lần đầu)
-                <button
-                  onClick={() => handleStart()}
-                  className="group relative flex items-center justify-center space-x-3 w-full sm:w-72 h-20 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-lg shadow-xl shadow-emerald-900/40 transition-all transform hover:scale-[1.02] active:scale-98"
-                >
-                  <Play className="w-7 h-7 fill-white" />
-                  <div className="text-left">
-                    <div className="text-xs uppercase tracking-wider text-emerald-200">
-                      {nextTarget ? `Tiếp theo: File #${nextTarget.id}` : 'Thêm & Render File mới'}
-                    </div>
-                    <div className="text-xl font-extrabold">BẮT ĐẦU RENDER</div>
-                  </div>
-                </button>
-              )}
+              </div>
 
-              {/* Đồng hồ Stopwatch đếm trực tiếp */}
-              <div className="flex flex-col items-center sm:items-start">
-                <span className="text-xs uppercase tracking-wider text-slate-400 font-medium">
-                  {activeId !== null ? 'Thời gian render thực tế' : 'Đồng hồ đếm thời gian'}
-                </span>
-                <div className="font-mono text-4xl sm:text-5xl font-black tracking-tight text-white flex items-baseline space-x-2">
-                  <span
-                    className={
-                      activeId !== null
-                        ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.5)]'
-                        : 'text-slate-500'
-                    }
+              {/* Nút hành động hàng loạt */}
+              <div className="flex items-center space-x-2 shrink-0">
+                {activeProcesses.length > 0 && (
+                  <button
+                    onClick={handleStopAllActive}
+                    className="inline-flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 text-xs font-semibold transition"
+                    title="Dừng tất cả các tiến trình đang chạy cùng 1 lúc"
                   >
-                    {liveDuration > 0 ? liveDuration.toFixed(1) : '0.0'}
-                  </span>
-                  <span className="text-lg text-slate-400 font-sans font-normal">giây</span>
-                </div>
-                <div className="text-[11px] text-slate-400 flex items-center space-x-1.5 mt-1">
-                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px] border border-slate-700">
-                    SPACE
-                  </span>
-                  <span>Nhấn Spacebar để Bắt đầu / Dừng tức thì</span>
-                </div>
+                    <StopCircle className="w-4 h-4 text-rose-400" />
+                    <span>Dừng tất cả ({activeProcesses.length})</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={handleAddRow}
+                  className="inline-flex items-center space-x-1 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Thêm dòng trống</span>
+                </button>
               </div>
             </div>
 
-            {/* Cột phải: Form nhập nhanh tên file hoặc ghi chú */}
-            <div className="w-full lg:w-96 bg-slate-900/70 p-4 rounded-xl border border-slate-800/80 backdrop-blur">
-              <div className="text-xs font-semibold text-slate-300 mb-2 flex items-center justify-between">
-                <span>Thông tin file render hiện tại</span>
-                {activeId !== null && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse">
-                    Đang ghi nhận
+            {/* Hàng 2: DOCK CÁC TIẾN TRÌNH ĐANG CHẠY TRỰC TIẾP (LIVE ACTIVE THREADS) */}
+            <div className="pt-3 border-t border-slate-800/80">
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="flex items-center space-x-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
+                  <span className="relative flex h-2.5 w-2.5">
+                    {activeProcesses.length > 0 && (
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                    )}
+                    <span
+                      className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                        activeProcesses.length > 0 ? 'bg-rose-500' : 'bg-slate-600'
+                      }`}
+                    ></span>
+                  </span>
+                  <span>
+                    Các Tiến Trình Đang Chạy Song Song ({activeProcesses.length}):
+                  </span>
+                </div>
+                {activeProcesses.length === 0 && (
+                  <span className="text-xs text-slate-500 italic">
+                    Chưa có tiến trình nào đang chạy. Nhấn nút Play ở bảng hoặc nút Start ở trên để chạy.
                   </span>
                 )}
               </div>
-              <div className="space-y-2">
-                <input
-                  type="text"
-                  placeholder="Tên file (ví dụ: Scene_01_Intro.mp4)"
-                  value={
-                    activeId !== null
-                      ? currentRunning?.fileName || ''
-                      : quickFileName
-                  }
-                  onChange={(e) => {
-                    const val = e.target.value
-                    if (activeId !== null) {
-                      setRecords((prev) =>
-                        prev.map((r) => (r.id === activeId ? { ...r, fileName: val } : r))
-                      )
-                    } else {
-                      setQuickFileName(val)
-                    }
-                  }}
-                  className="w-full px-3 py-2 text-xs rounded-lg bg-slate-800/90 border border-slate-700 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                />
-                <input
-                  type="text"
-                  placeholder="Ghi chú (độ phân giải, preset, hiệu ứng...)"
-                  value={
-                    activeId !== null
-                      ? currentRunning?.note || ''
-                      : quickNote
-                  }
-                  onChange={(e) => {
-                    const val = e.target.value
-                    if (activeId !== null) {
-                      setRecords((prev) =>
-                        prev.map((r) => (r.id === activeId ? { ...r, note: val } : r))
-                      )
-                    } else {
-                      setQuickNote(val)
-                    }
-                  }}
-                  className="w-full px-3 py-2 text-xs rounded-lg bg-slate-800/90 border border-slate-700 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-              {activeId !== null && (
-                <div className="mt-2 flex justify-end">
-                  <button
-                    onClick={() => {
-                      if (window.confirm('Hủy bỏ lượt render file hiện tại?')) {
-                        handleResetRow(activeId)
-                      }
-                    }}
-                    className="text-[11px] text-slate-400 hover:text-rose-400 transition"
-                  >
-                    Hủy lượt đo này
-                  </button>
+
+              {activeProcesses.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {activeProcesses.map((proc) => {
+                    const elapsed = getElapsedSeconds(proc)
+                    return (
+                      <div
+                        key={proc.id}
+                        className="p-3 rounded-xl border border-rose-500/30 bg-rose-950/20 backdrop-blur flex items-center justify-between shadow-lg shadow-rose-950/20"
+                      >
+                        <div className="truncate pr-2">
+                          <div className="text-xs font-bold text-slate-100 truncate">
+                            {proc.fileName}
+                          </div>
+                          <div className="font-mono text-base font-extrabold text-amber-400 mt-0.5">
+                            {formatTimerClock(elapsed)}
+                          </div>
+                          <div className="text-[10px] text-slate-400 truncate">
+                            {proc.note || `Bắt đầu lúc ${formatDateTime(proc.startTime).slice(11)}`}
+                          </div>
+                        </div>
+
+                        {/* NÚT DỪNG RIÊNG BIỆT CHO TIẾN TRÌNH NÀY */}
+                        <button
+                          onClick={() => handleStopProcess(proc.id)}
+                          className="flex items-center space-x-1 px-3 py-2 rounded-lg bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-bold text-xs shadow-md shadow-rose-950/50 transition transform hover:scale-105 active:scale-95 shrink-0"
+                          title={`Dừng riêng biệt cho ${proc.fileName}`}
+                        >
+                          <Square className="w-3.5 h-3.5 fill-white" />
+                          <span>DỪNG</span>
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl border border-dashed border-slate-800 bg-slate-900/30 text-center text-xs text-slate-400">
+                  ⚡ <strong className="text-slate-300">Mẹo đa luồng:</strong> Bạn có thể nhấn <code className="text-emerald-400">Start</code> cho Tiến trình A, rồi tiếp tục nhấn <code className="text-emerald-400">Start</code> cho Tiến trình B và C. Sau đó có thể nhấn <code className="text-rose-400">Dừng</code> cho Tiến trình B trước, rồi A, rồi C tùy ý!
                 </div>
               )}
             </div>
@@ -525,8 +535,25 @@ export default function App() {
         </div>
 
         {/* THẺ CHỈ SỐ THỐNG KÊ (KPIs) */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          {/* 1. Số file hoàn tất */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* Đang chạy song song */}
+          <div className="bg-[#0F172A] border border-slate-800/80 rounded-xl p-4 flex flex-col justify-between">
+            <span className="text-xs text-slate-400 font-medium flex items-center justify-between">
+              Đang chạy
+              <Timer className="w-3.5 h-3.5 text-amber-400" />
+            </span>
+            <div className="mt-2">
+              <div className="text-2xl font-bold text-amber-400 font-mono">
+                {stats.activeCount}
+                <span className="text-xs text-slate-400 font-normal ml-1">luồng</span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1 truncate">
+                {stats.activeCount > 1 ? 'Render đa luồng' : stats.activeCount === 1 ? '1 luồng đang chạy' : 'Đang tạm nghỉ'}
+              </p>
+            </div>
+          </div>
+
+          {/* Đã hoàn tất */}
           <div className="bg-[#0F172A] border border-slate-800/80 rounded-xl p-4 flex flex-col justify-between">
             <span className="text-xs text-slate-400 font-medium flex items-center justify-between">
               Đã hoàn tất
@@ -548,10 +575,10 @@ export default function App() {
             </div>
           </div>
 
-          {/* 2. Render trung bình */}
+          {/* Render trung bình */}
           <div className="bg-[#0F172A] border border-slate-800/80 rounded-xl p-4 flex flex-col justify-between">
             <span className="text-xs text-slate-400 font-medium flex items-center justify-between">
-              TB mỗi file
+              TB mỗi tiến trình
               <Clock className="w-3.5 h-3.5 text-blue-400" />
             </span>
             <div className="mt-2">
@@ -560,12 +587,12 @@ export default function App() {
                 <span className="text-xs text-slate-400 font-normal ml-1">giây</span>
               </div>
               <p className="text-[11px] text-slate-400 mt-1 truncate">
-                {stats.avgTime > 60 ? 'Hơi chậm' : stats.avgTime > 0 ? 'Tốc độ ổn' : 'Chưa có dữ liệu'}
+                {stats.avgTime > 60 ? 'Tải nặng' : stats.avgTime > 0 ? 'Tốc độ tốt' : 'Chưa có dữ liệu'}
               </p>
             </div>
           </div>
 
-          {/* 3. Nhanh nhất */}
+          {/* Nhanh nhất */}
           <div className="bg-[#0F172A] border border-slate-800/80 rounded-xl p-4 flex flex-col justify-between">
             <span className="text-xs text-slate-400 font-medium flex items-center justify-between">
               Nhanh nhất
@@ -577,29 +604,29 @@ export default function App() {
                 <span className="text-xs text-slate-400 font-normal ml-1">giây</span>
               </div>
               <p className="text-[11px] text-slate-400 mt-1 truncate">
-                {stats.fastestFile ? `File #${stats.fastestFile.id}` : '-'}
+                {stats.fastestFile ? stats.fastestFile.fileName : '-'}
               </p>
             </div>
           </div>
 
-          {/* 4. Chậm nhất */}
+          {/* Chậm nhất */}
           <div className="bg-[#0F172A] border border-slate-800/80 rounded-xl p-4 flex flex-col justify-between">
             <span className="text-xs text-slate-400 font-medium flex items-center justify-between">
               Chậm nhất
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
             </span>
             <div className="mt-2">
-              <div className="text-2xl font-bold text-amber-400 font-mono">
+              <div className="text-2xl font-bold text-rose-400 font-mono">
                 {stats.maxTime > 0 ? stats.maxTime : '0'}
                 <span className="text-xs text-slate-400 font-normal ml-1">giây</span>
               </div>
               <p className="text-[11px] text-slate-400 mt-1 truncate">
-                {stats.slowestFile ? `File #${stats.slowestFile.id}` : '-'}
+                {stats.slowestFile ? stats.slowestFile.fileName : '-'}
               </p>
             </div>
           </div>
 
-          {/* 5. Tổng thời gian tích lũy */}
+          {/* Tổng thời gian tích lũy */}
           <div className="bg-[#0F172A] border border-slate-800/80 rounded-xl p-4 flex flex-col justify-between">
             <span className="text-xs text-slate-400 font-medium flex items-center justify-between">
               Tổng thời gian
@@ -611,33 +638,13 @@ export default function App() {
                 <span className="text-xs text-slate-400 font-normal ml-1">s</span>
               </div>
               <p className="text-[11px] text-slate-400 mt-1 truncate">
-                ~{(stats.totalTime / 60).toFixed(1)} phút làm việc
-              </p>
-            </div>
-          </div>
-
-          {/* 6. Điểm ổn định hiệu năng */}
-          <div className="bg-[#0F172A] border border-slate-800/80 rounded-xl p-4 flex flex-col justify-between">
-            <span className="text-xs text-slate-400 font-medium flex items-center justify-between">
-              Độ ổn định
-              <BarChart3 className="w-3.5 h-3.5 text-indigo-400" />
-            </span>
-            <div className="mt-2">
-              <div className="text-2xl font-bold text-indigo-400 font-mono">
-                {stats.completedCount >= 2 ? `${stats.stabilityScore}%` : '100%'}
-              </div>
-              <p className="text-[11px] text-slate-400 mt-1 truncate">
-                {stats.stabilityScore >= 80
-                  ? 'Rất đồng đều'
-                  : stats.stabilityScore >= 60
-                  ? 'Bình thường'
-                  : 'Chênh lệch cao'}
+                ~{(stats.totalTime / 60).toFixed(1)} phút tích lũy
               </p>
             </div>
           </div>
         </div>
 
-        {/* PHẦN ĐỀ XUẤT THÔNG MINH DỰA TRÊN DỮ LIỆU FILE EXCEL */}
+        {/* PHẦN ĐỀ XUẤT THÔNG MINH */}
         <div className="bg-[#0F172A] border border-slate-800 rounded-2xl p-5 shadow-xl">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-2">
@@ -645,7 +652,7 @@ export default function App() {
                 <Sparkles className="w-4 h-4" />
               </div>
               <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">
-                Phân Tích Dữ Liệu & Đề Xuất Tối Ưu Hóa Render
+                Phân Tích Hiệu Suất Đa Luồng & Đề Xuất Tối Ưu
               </h2>
             </div>
             <button
@@ -653,15 +660,14 @@ export default function App() {
               className="text-xs text-slate-400 hover:text-slate-200 inline-flex items-center space-x-1"
             >
               <HelpCircle className="w-3.5 h-3.5" />
-              <span>Xem hướng dẫn & VBA gốc</span>
+              <span>Xem nguyên lý Excel & VBA</span>
             </button>
           </div>
 
-          {/* Modal / Collapse hướng dẫn VBA */}
           {showVbaGuide && (
             <div className="mb-4 p-4 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-slate-300 space-y-3">
               <div className="flex items-center justify-between font-semibold text-slate-200">
-                <span>Nguyên lý hoạt động file Excel & Macro VBA gốc:</span>
+                <span>Tại sao Web App này vượt trội hơn Excel Macro đơn luồng?</span>
                 <button
                   onClick={() => setShowVbaGuide(false)}
                   className="text-slate-400 hover:text-white"
@@ -670,20 +676,10 @@ export default function App() {
                 </button>
               </div>
               <p>
-                File Excel gốc sử dụng sự kiện <code className="text-amber-300">Worksheet_Change</code>.
-                Khi bạn nhập ký tự vào cột B rồi Enter, VBA tự điền thời gian bắt đầu vào cột C. Khi xong,
-                nhập ký tự vào cột D rồi Enter để ghi thời gian kết thúc vào cột E.
+                Trong Excel VBA truyền thống, việc theo dõi nhiều tiến trình chạy song song (Start A, B, C rồi dừng riêng biệt B, A, C) rất khó quản lý vì người dùng phải tự tìm đúng dòng trong bảng và nhập ký tự vào cột B/D.
               </p>
-              <div className="p-2 rounded bg-black/50 font-mono text-[11px] text-slate-300 overflow-x-auto max-h-40">
-                <pre>{`Private Sub Worksheet_Change(ByVal Target As Range)
-    ' Ghi timestamp cố định tại C khi nhập B, và E khi nhập D
-    If Target.Column = 2 Then Me.Cells(Target.Row, "C").Value = Now
-    If Target.Column = 4 Then Me.Cells(Target.Row, "E").Value = Now
-End Sub`}</pre>
-              </div>
-              <p className="text-emerald-400 font-medium">
-                💡 Trên phiên bản Web này: Bạn không cần cài đặt Macro hay Excel phức tạp. Chỉ cần click
-                chuột 1 lần hoặc nhấn Spacebar, mọi công thức tính toán và phân tích được tự động hóa 100%!
+              <p className="text-indigo-400 font-medium">
+                🚀 Trên Web App này: Từng tiến trình A, B, C có bộ đếm độc lập hoàn toàn với độ trễ 0ms. Khi bạn bấm Dừng tiến trình nào, thời điểm bắt đầu và kết thúc của đúng dòng đó sẽ được chốt lại, sau đó xuất ra file Excel chuẩn 100% template HK RENDER TIME LOGGER!
               </p>
             </div>
           )}
@@ -724,50 +720,31 @@ End Sub`}</pre>
               )
             })}
           </div>
-
-          {/* Phân bố tỉ lệ thời gian render */}
-          {stats.completedCount > 0 && (
-            <div className="mt-4 pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
-              <div className="flex items-center space-x-3 text-slate-400">
-                <span className="font-semibold text-slate-300">Phân bố thời gian render:</span>
-                <span className="flex items-center space-x-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                  <span>&lt;20s ({stats.distribution.fast})</span>
-                </span>
-                <span className="flex items-center space-x-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                  <span>20-50s ({stats.distribution.normal})</span>
-                </span>
-                <span className="flex items-center space-x-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                  <span>50-100s ({stats.distribution.medium})</span>
-                </span>
-                <span className="flex items-center space-x-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
-                  <span>&gt;100s ({stats.distribution.slow})</span>
-                </span>
-              </div>
-              <div className="text-slate-400">
-                Độ lệch chuẩn: <span className="font-mono text-slate-200">±{stats.stdDev?.toFixed(1) || 0}s</span>
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* BẢNG CHI TIẾT DỮ LIỆU TƯƠNG THÍCH MẪU EXCEL HK RENDER */}
+        {/* BẢNG QUẢN LÝ TIẾN TRÌNH CHI TIẾT */}
         <div className="bg-[#0F172A] border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
           <div className="px-5 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-[#11192C]">
             <div className="flex items-center space-x-2">
-              <FileSpreadsheet className="w-4 h-4 text-blue-400" />
+              <FileSpreadsheet className="w-4 h-4 text-indigo-400" />
               <h3 className="text-sm font-bold text-slate-200">
-                Danh Sách Chi Tiết Các File Render
+                Danh Sách Tiến Trình & Bộ Đếm Thời Gian Riêng Biệt
               </h3>
               <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
-                {records.length} dòng
+                {records.length} tiến trình
               </span>
             </div>
 
             <div className="flex items-center space-x-2">
+              <button
+                onClick={handleStartAllIdle}
+                className="inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 transition"
+                title="Bắt đầu đồng loạt các tiến trình chưa chạy"
+              >
+                <Play className="w-3 h-3 fill-current" />
+                <span>Start tất cả chưa chạy</span>
+              </button>
+
               <button
                 onClick={handleAddRow}
                 className="inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 transition"
@@ -783,25 +760,26 @@ End Sub`}</pre>
               <thead>
                 <tr className="border-b border-slate-800 bg-[#0C1222] text-slate-400 uppercase tracking-wider font-semibold text-[11px]">
                   <th className="py-3 px-3 text-center w-12">STT</th>
-                  <th className="py-3 px-4 min-w-[140px]">Tên File</th>
+                  <th className="py-3 px-4 min-w-[150px]">Tên Tiến Trình / File</th>
                   <th className="py-3 px-4 min-w-[170px] text-center">Thời Điểm Bắt Đầu</th>
                   <th className="py-3 px-4 min-w-[170px] text-center">Thời Điểm Kết Thúc</th>
-                  <th className="py-3 px-4 text-right min-w-[110px]">Render (giây)</th>
-                  <th className="py-3 px-4 min-w-[100px] text-center">Tỉ Lệ / Đánh Giá</th>
+                  <th className="py-3 px-4 text-right min-w-[120px]">Thời Gian (giây)</th>
+                  <th className="py-3 px-4 min-w-[100px] text-center">Đánh Giá</th>
                   <th className="py-3 px-4 min-w-[180px]">Ghi Chú</th>
-                  <th className="py-3 px-3 text-center w-28">Thao Tác</th>
+                  <th className="py-3 px-3 text-center w-36">Thao Tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-sans">
-                {records.map((r, index) => {
-                  const isRunning = activeId === r.id
+                {records.map((r) => {
+                  const isRunning = r.startTime && !r.endTime
                   const isCompleted = r.duration !== null && r.duration !== undefined
+                  const elapsed = getElapsedSeconds(r)
+
                   const isBottleneck =
                     isCompleted && stats.avgTime > 0 && r.duration > stats.avgTime * 1.3
                   const isSuperFast =
                     isCompleted && stats.avgTime > 0 && r.duration < stats.avgTime * 0.7
 
-                  // Tỉ lệ % so với trung bình
                   let pctVsAvg = 0
                   if (isCompleted && stats.avgTime > 0) {
                     pctVsAvg = Math.round(((r.duration - stats.avgTime) / stats.avgTime) * 100)
@@ -811,7 +789,7 @@ End Sub`}</pre>
                     <tr
                       key={r.id}
                       className={`hover:bg-slate-800/40 transition-colors ${
-                        isRunning ? 'bg-blue-950/20' : ''
+                        isRunning ? 'bg-indigo-950/20' : ''
                       }`}
                     >
                       {/* STT */}
@@ -819,19 +797,21 @@ End Sub`}</pre>
                         {r.id}
                       </td>
 
-                      {/* Tên File */}
+                      {/* Tên Tiến Trình */}
                       <td className="py-3 px-4">
-                        <input
-                          type="text"
-                          value={r.fileName}
-                          onChange={(e) => {
-                            const val = e.target.value
-                            setRecords((prev) =>
-                              prev.map((item) => (item.id === r.id ? { ...item, fileName: val } : item))
-                            )
-                          }}
-                          className="w-full bg-transparent border-b border-transparent hover:border-slate-700 focus:border-blue-500 text-slate-200 font-medium focus:outline-none px-1 py-0.5 rounded text-xs"
-                        />
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="text"
+                            value={r.fileName}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setRecords((prev) =>
+                                prev.map((item) => (item.id === r.id ? { ...item, fileName: val } : item))
+                              )
+                            }}
+                            className="w-full bg-transparent border-b border-transparent hover:border-slate-700 focus:border-indigo-500 text-slate-200 font-semibold focus:outline-none px-1 py-0.5 rounded text-xs"
+                          />
+                        </div>
                       </td>
 
                       {/* Thời điểm bắt đầu */}
@@ -854,18 +834,18 @@ End Sub`}</pre>
                         ) : isRunning ? (
                           <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] animate-pulse">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
-                            <span>Đang render...</span>
+                            <span>Đang chạy...</span>
                           </span>
                         ) : (
                           <span className="text-slate-600">-</span>
                         )}
                       </td>
 
-                      {/* Render (giây) */}
+                      {/* Thời Gian (giây) */}
                       <td className="py-3 px-4 text-right font-mono font-bold">
                         {isRunning ? (
-                          <span className="text-amber-400 text-sm animate-pulse">
-                            {liveDuration.toFixed(1)}s
+                          <span className="text-amber-400 text-sm font-black animate-pulse">
+                            {elapsed}s
                           </span>
                         ) : isCompleted ? (
                           <span
@@ -884,7 +864,7 @@ End Sub`}</pre>
                         )}
                       </td>
 
-                      {/* Tỉ lệ / Đánh giá */}
+                      {/* Đánh Giá / Tỉ lệ */}
                       <td className="py-3 px-4 text-center">
                         {isCompleted && stats.avgTime > 0 ? (
                           <div className="flex flex-col items-center">
@@ -903,12 +883,14 @@ End Sub`}</pre>
                               {isBottleneck ? 'Chậm' : isSuperFast ? 'Nhanh' : 'Chuẩn'}
                             </span>
                           </div>
+                        ) : isRunning ? (
+                          <span className="text-[10px] text-amber-400 font-medium">Live</span>
                         ) : (
                           <span className="text-slate-600">-</span>
                         )}
                       </td>
 
-                      {/* Ghi chú */}
+                      {/* Ghi Chú */}
                       <td className="py-3 px-4">
                         <input
                           type="text"
@@ -920,34 +902,39 @@ End Sub`}</pre>
                               prev.map((item) => (item.id === r.id ? { ...item, note: val } : item))
                             )
                           }}
-                          className="w-full bg-transparent border-b border-transparent hover:border-slate-700 focus:border-blue-500 text-slate-300 placeholder-slate-600 focus:outline-none px-1 py-0.5 rounded text-xs"
+                          className="w-full bg-transparent border-b border-transparent hover:border-slate-700 focus:border-indigo-500 text-slate-300 placeholder-slate-600 focus:outline-none px-1 py-0.5 rounded text-xs"
                         />
                       </td>
 
-                      {/* Thao tác từng dòng */}
+                      {/* Thao Tác Từng Tiến Trình */}
                       <td className="py-3 px-3 text-center">
-                        <div className="inline-flex items-center space-x-1">
+                        <div className="inline-flex items-center space-x-1.5">
                           {isRunning ? (
+                            // NÚT DỪNG RIÊNG CHO DÒNG NÀY
                             <button
-                              onClick={() => handleStop(r.id)}
-                              className="p-1 rounded bg-rose-600 hover:bg-rose-500 text-white transition"
-                              title="Dừng render dòng này"
+                              onClick={() => handleStopProcess(r.id)}
+                              className="inline-flex items-center space-x-1 px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] shadow-sm shadow-rose-950 transition active:scale-95"
+                              title={`Dừng tiến trình ${r.fileName}`}
                             >
-                              <Square className="w-3.5 h-3.5 fill-white" />
+                              <Square className="w-3 h-3 fill-white" />
+                              <span>Dừng</span>
                             </button>
                           ) : !r.startTime ? (
+                            // NÚT BẮT ĐẦU CHO DÒNG NÀY
                             <button
-                              onClick={() => handleStart(r.id)}
-                              className="p-1 rounded bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white transition"
-                              title="Bắt đầu render dòng này"
+                              onClick={() => handleStartProcess(r.id)}
+                              className="inline-flex items-center space-x-1 px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shadow-sm shadow-emerald-950 transition active:scale-95"
+                              title={`Khởi chạy tiến trình ${r.fileName}`}
                             >
-                              <Play className="w-3.5 h-3.5 fill-current" />
+                              <Play className="w-3 h-3 fill-white" />
+                              <span>Start</span>
                             </button>
                           ) : (
+                            // NÚT ĐO LẠI
                             <button
                               onClick={() => handleResetRow(r.id)}
                               className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition"
-                              title="Đo lại dòng này"
+                              title="Đo lại tiến trình này"
                             >
                               <RotateCcw className="w-3.5 h-3.5" />
                             </button>
@@ -956,7 +943,7 @@ End Sub`}</pre>
                           <button
                             onClick={() => handleDeleteRow(r.id)}
                             className="p-1 rounded hover:bg-red-950/50 text-slate-500 hover:text-rose-400 transition"
-                            title="Xóa dòng này"
+                            title="Xóa tiến trình này"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -969,10 +956,10 @@ End Sub`}</pre>
             </table>
           </div>
 
-          {/* Footer bảng: Thống kê nhanh dưới bảng giống hệt file Excel HK Render */}
+          {/* Footer bảng thống kê chuẩn template HK RENDER */}
           <div className="p-4 bg-[#0A0F1E] border-t border-slate-800 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
             <div className="flex justify-between items-center py-1 border-b md:border-b-0 md:border-r border-slate-800/80 pr-4">
-              <span className="text-slate-400">Số file đã hoàn tất:</span>
+              <span className="text-slate-400">Số file/tiến trình đã hoàn tất:</span>
               <span className="font-mono font-bold text-white text-sm">{stats.completedCount}</span>
             </div>
             <div className="flex justify-between items-center py-1 border-b md:border-b-0 md:border-r border-slate-800/80 pr-4">
@@ -987,24 +974,23 @@ End Sub`}</pre>
             </div>
             <div className="flex justify-between items-center py-1">
               <span className="text-slate-400">Chậm nhất (giây):</span>
-              <span className="font-mono font-bold text-amber-400 text-sm">{stats.maxTime ?? 0}</span>
+              <span className="font-mono font-bold text-rose-400 text-sm">{stats.maxTime ?? 0}</span>
             </div>
           </div>
         </div>
 
-        {/* Hướng Dẫn Deploy Lên Vercel & Render */}
+        {/* Footer info */}
         <div className="p-4 rounded-xl border border-slate-800 bg-[#0B101D] text-xs text-slate-400 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-slate-300 font-bold">
-              ▲
+            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold">
+              ⚡
             </div>
             <div>
               <span className="font-semibold text-slate-200">
-                Sẵn sàng triển khai lên Vercel hoặc Render:
+                Sẵn sàng xuất file Excel & lưu trữ phiên làm việc tự động
               </span>
               <p className="text-[11px] text-slate-400">
-                Chạy lệnh <code className="text-blue-400">npm run build</code> rồi liên kết GitHub repo với
-                Vercel (chọn Framework Vite) hoặc Render Static Site chỉ với 1 click!
+                Mọi thời điểm bắt đầu và kết thúc độc lập của từng tiến trình được lưu vào LocalStorage và xuất ra đúng template Excel.
               </p>
             </div>
           </div>
@@ -1013,7 +999,7 @@ End Sub`}</pre>
             className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition shrink-0"
           >
             <Download className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Tải Excel Log Ngay</span>
+            <span>Tải Báo Cáo Excel</span>
           </button>
         </div>
       </main>
