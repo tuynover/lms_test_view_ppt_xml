@@ -3,3 +3,5 @@ giao_dien_hien_tai
 output
 render-logger-web/node_modules
 render-logger-web/dist
+__pycache__/
+*.pyc
