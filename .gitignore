@@ -1,3 +1,5 @@
 giao_dien_de_xuat
 giao_dien_hien_tai
 output
+render-logger-web/node_modules
+render-logger-web/dist
