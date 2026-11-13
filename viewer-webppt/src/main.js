@@ -181,8 +181,10 @@ async function loadPresentation(rawBuffer, displayName = 'Presentation') {
     // 4. Nạp font nhúng
     injectEmbeddedFonts(pres);
 
-    // 5. Khởi tạo Viewer mới
-    currentViewer = new Viewer(stage, pres);
+    // 5. Khởi tạo Viewer mới (bật chế độ player để nhúng <video>/<audio> tương tác)
+    currentViewer = new Viewer(stage, pres, {
+      media: 'player'
+    });
 
     currentPres = pres;
     mediaSlideIndices = scanMediaSlides(pres);
@@ -216,6 +218,10 @@ async function loadPresentation(rawBuffer, displayName = 'Presentation') {
     // Chuyển sang màn hình trình chiếu
     welcomeView.style.display = 'none';
     presentationView.style.display = 'flex';
+
+    // Căn chỉnh kích thước hiển thị vừa khít khung nhìn
+    fitStageToViewport(pres);
+
     hideLoading();
   } catch (err) {
     console.error('Error loading presentation:', err);
@@ -223,6 +229,33 @@ async function loadPresentation(rawBuffer, displayName = 'Presentation') {
     alert(`Lỗi phân tích bài giảng:\n${err.message}`);
   }
 }
+
+// Căn chỉnh kích thước stage để vừa khít màn hình hiển thị theo đúng tỷ lệ slide
+function fitStageToViewport(pres) {
+  const container = document.getElementById('viewport');
+  if (!container || !pres) return;
+
+  const paddingX = 40;
+  const paddingY = 88; // Trừ khoảng trống phía dưới cho thanh dock nổi
+  const availW = Math.max(container.clientWidth - paddingX, 320);
+  const availH = Math.max(container.clientHeight - paddingY, 200);
+
+  const presW = pres.width || 1280;
+  const presH = pres.height || 720;
+
+  const scale = Math.min(availW / presW, availH / presH);
+  const targetW = Math.round(presW * scale);
+  const targetH = Math.round(presH * scale);
+
+  stage.style.width = `${targetW}px`;
+  stage.style.height = `${targetH}px`;
+}
+
+window.addEventListener('resize', () => {
+  if (currentPres && presentationView.style.display !== 'none') {
+    fitStageToViewport(currentPres);
+  }
+});
 
 // Render Thumbnails
 function renderThumbnails(pres) {
@@ -244,6 +277,17 @@ function renderThumbnails(pres) {
         <span style="font-size:11px; color:#64748b;">${idx + 1}</span>
       </div>
     `;
+
+    // Nạp hình thu nhỏ trực quan (SVG miniature)
+    if (currentViewer && currentViewer.renderSlide) {
+      try {
+        const svgStr = currentViewer.renderSlide(idx);
+        if (svgStr) {
+          const pbox = item.querySelector('.thumb-preview-box');
+          if (pbox) pbox.innerHTML = svgStr;
+        }
+      } catch (err) {}
+    }
 
     item.addEventListener('click', () => {
       if (currentViewer) {
