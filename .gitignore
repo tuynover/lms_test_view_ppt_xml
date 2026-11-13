@@ -3,5 +3,10 @@ giao_dien_hien_tai
 output
 render-logger-web/node_modules
 render-logger-web/dist
+viewer-webppt/node_modules
+viewer-webppt/dist
+web-ppt/node_modules
 __pycache__/
 *.pyc
+.DS_Store
+Thumbs.db
