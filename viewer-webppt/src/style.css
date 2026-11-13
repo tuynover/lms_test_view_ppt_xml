@@ -651,6 +651,14 @@ body {
   display: block;
 }
 
+/* Triệt tiêu triệt để viền hộp chữ nhật xám của hiệu ứng 3D bevel giả lập trên các khối trong suốt */
+.presentation-stage svg g[clip-path] path[stroke="rgb(128,128,128)"],
+.presentation-stage svg g[clip-path] path[stroke="#808080"],
+.presentation-stage svg g[clip-path*="bv"],
+.thumb-preview-box svg g[clip-path*="bv"] {
+  display: none !important;
+}
+
 /* Floating Presentation Dock Controls */
 .floating-dock {
   position: absolute;

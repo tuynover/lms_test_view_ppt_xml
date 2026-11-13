@@ -157,6 +157,39 @@ function scanMediaSlides(pres) {
   return indices;
 }
 
+// Khử bỏ các hiệu ứng viền hộp chữ nhật xám / bevel giả lập trên các textbox trong suốt
+function sanitizePresentation(pres) {
+  if (!pres || !pres.slides) return;
+
+  function sanitizeElements(elements) {
+    if (!elements || !Array.isArray(elements)) return;
+    for (const el of elements) {
+      if (!el) continue;
+      if (el.kind === 'shape') {
+        const isTransparent = !el.fill || el.fill.type === 'none';
+        const hasNoStroke = !el.stroke || el.stroke.none || !el.stroke.color;
+
+        // Nếu textbox hoặc shape không có nền và không có viền thật:
+        // PowerPoint chỉ coi đây là khung chứa chữ trong suốt.
+        // Xóa path / scene3d / effects khung để tránh lỗi @web-ppt/core tự vẽ hộp chữ nhật xám (3D extrusion / bevel) xung quanh chữ.
+        if (isTransparent && hasNoStroke) {
+          el.path = null;
+          if (el.scene3d) delete el.scene3d;
+          if (el.effects) delete el.effects;
+        }
+      } else if (el.kind === 'group' && el.children) {
+        sanitizeElements(el.children);
+      }
+    }
+  }
+
+  pres.slides.forEach(slide => {
+    if (slide.elements) {
+      sanitizeElements(slide.elements);
+    }
+  });
+}
+
 // Phân tích và tải bài giảng
 async function loadPresentation(rawBuffer, displayName = 'Presentation') {
   showLoading(`Đang phân tích "${displayName}"...`, 'Kiểm tra và chuẩn hóa cấu trúc OOXML');
@@ -169,6 +202,10 @@ async function loadPresentation(rawBuffer, displayName = 'Presentation') {
     // 2. Parse cấu trúc OOXML
     showLoading(`Đang phân tích "${displayName}"...`, 'Giải nén cấu trúc OOXML & font nhúng vào RAM');
     const pres = await parse(buffer);
+
+    // 3. Khử lỗi viền hộp chữ nhật trên các khối textbox trong suốt
+    sanitizePresentation(pres);
+
     const duration = Math.round(performance.now() - t0);
 
     // 3. Dọn dẹp viewer cũ
