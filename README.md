@@ -38,7 +38,7 @@ Trình duyệt và phát bài giảng PowerPoint (.pptx, .zip) trực tiếp 100
 Dự án đã được cấu hình sẵn GitHub Actions workflow tại [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
 
 ### Bước 1: Kích hoạt GitHub Pages trên Repository
-1. Truy cập vào repository của bạn trên GitHub: `https://github.com/tuynover/test_log`
+1. Truy cập vào repository của bạn trên GitHub: `https://github.com/tuynover/lms_test_view_ppt_xml`
 2. Vào tab **Settings** ➔ Mục **Pages** (ở menu bên trái).
 3. Tại phần **Build and deployment** ➔ **Source**: Chọn **`GitHub Actions`**.
 
@@ -54,7 +54,7 @@ git push origin main
 ### Bước 3: Truy cập ứng dụng trực tuyến
 Sau khi GitHub Actions chạy xong (~1 phút), trang web sẽ sẵn sàng tại:
 ```
-https://tuynover.github.io/test_log/
+https://tuynover.github.io/lms_test_view_ppt_xml/
 ```
 
 ---
