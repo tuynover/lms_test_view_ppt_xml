@@ -1,6 +1,7 @@
 import { parse, setFontDecoder } from '@web-ppt/core';
 import { eotToTtf } from 'mtx-decompressor';
 import { Viewer } from '@web-ppt/viewer-core';
+import * as fflate from 'fflate';
 
 // Kích hoạt giải mã font nhúng .fntdata (MicroType Express sang TrueType)
 setFontDecoder(eotToTtf);
@@ -28,14 +29,16 @@ const mediaJumpText = document.getElementById('mediaJumpText');
 const currentSlideNum = document.getElementById('currentSlideNum');
 const totalSlideNum = document.getElementById('totalSlideNum');
 
-// Dropdown & Input Elements
+// File Upload Trigger Elements
 const fileInput = document.getElementById('fileInput');
+const btnHeaderOpen = document.getElementById('btnHeaderOpen');
+const btnChooseFile = document.getElementById('btnChooseFile');
 const dropZone = document.getElementById('dropZone');
+
+// Dropdown & Help Modals
 const btnSamplesDropdown = document.getElementById('btnSamplesDropdown');
 const samplesMenu = document.getElementById('samplesMenu');
 const brandHome = document.getElementById('brandHome');
-
-// Loading & Help Modals
 const loadingOverlay = document.getElementById('loadingOverlay');
 const loadingTitle = document.getElementById('loadingTitle');
 const loadingText = document.getElementById('loadingText');
@@ -50,7 +53,7 @@ let currentFontStyles = [];
 let mediaSlideIndices = [];
 let currentMediaPointer = 0;
 
-// Show Loading State
+// Show/Hide Loading
 function showLoading(title = 'Đang tải bài giảng...', subtitle = 'Đang xử lý cấu trúc XML và tài nguyên') {
   loadingTitle.textContent = title;
   loadingText.textContent = subtitle;
@@ -61,7 +64,53 @@ function hideLoading() {
   loadingOverlay.style.display = 'none';
 }
 
-// Inject Embedded Fonts into Document
+// Kiểm tra định dạng nhị phân PowerPoint 97-2003 cũ (.ppt)
+function isLegacyBinaryPpt(u8) {
+  return u8.length >= 8 &&
+    u8[0] === 0xD0 && u8[1] === 0xCF && u8[2] === 0x11 && u8[3] === 0xE0 &&
+    u8[4] === 0xA1 && u8[5] === 0xB1 && u8[6] === 0x1A && u8[7] === 0xE1;
+}
+
+// Chuẩn hóa bộ đệm PPTX/ZIP (Gỡ bỏ thư mục lồng nếu người dùng nén cả folder)
+function normalizePresentationBuffer(rawBuffer) {
+  const u8 = new Uint8Array(rawBuffer);
+
+  // Phát hiện file .ppt nhị phân cũ
+  if (isLegacyBinaryPpt(u8)) {
+    throw new Error('File này là định dạng PowerPoint 97-2003 cũ (.ppt).\n\nVui lòng mở file bằng PowerPoint và chọn Save As sang định dạng PowerPoint (.pptx) chuẩn để trình chiếu với chất lượng vector cao nhất!');
+  }
+
+  try {
+    const unzipped = fflate.unzipSync(u8);
+    const keys = Object.keys(unzipped);
+
+    // Nếu cấu trúc gốc đã có ppt/presentation.xml thì dùng luôn
+    if (keys.includes('ppt/presentation.xml')) {
+      return rawBuffer;
+    }
+
+    // Nếu file ZIP chứa một thư mục lồng (ví dụ: "TenFolder/ppt/presentation.xml")
+    const presKey = keys.find(k => k.endsWith('/ppt/presentation.xml') || k === 'ppt/presentation.xml');
+    if (presKey) {
+      const prefix = presKey.slice(0, presKey.indexOf('ppt/presentation.xml'));
+      console.log('Phát hiện ZIP bị lồng thư mục con. Tự động bóc tách tiền tố:', prefix);
+      const normalized = {};
+      for (const [key, val] of Object.entries(unzipped)) {
+        if (key.startsWith(prefix) && key.length > prefix.length) {
+          normalized[key.slice(prefix.length)] = val;
+        }
+      }
+      const rezipped = fflate.zipSync(normalized, { level: 0 });
+      return rezipped.buffer;
+    }
+  } catch (err) {
+    console.warn('Bỏ qua kiểm tra cấu trúc ZIP bổ sung:', err);
+  }
+
+  return rawBuffer;
+}
+
+// Inject Embedded Fonts vào Document
 function injectEmbeddedFonts(pres) {
   currentFontStyles.forEach(style => style.remove());
   currentFontStyles = [];
@@ -89,49 +138,64 @@ function injectEmbeddedFonts(pres) {
   currentFontStyles.push(styleEl);
 }
 
-// Detect slides containing Video or Audio
+// Quét toàn bộ slide để phát hiện Video hoặc Audio nhúng
 function scanMediaSlides(pres) {
   const indices = [];
+  function hasMedia(el) {
+    if (!el) return false;
+    if (el.media || el.kind === 'video' || el.kind === 'audio') return true;
+    if (el.children && Array.isArray(el.children)) {
+      return el.children.some(hasMedia);
+    }
+    return false;
+  }
   pres.slides.forEach((slide, idx) => {
-    const hasMedia = slide.elements && slide.elements.some(el => el.type === 'video' || el.type === 'audio');
-    if (hasMedia) indices.push(idx);
+    if (slide.elements && slide.elements.some(hasMedia)) {
+      indices.push(idx);
+    }
   });
   return indices;
 }
 
-// Load and Parse Presentation from ArrayBuffer
-async function loadPresentation(buffer, displayName = 'Presentation') {
-  showLoading(`Đang phân tích "${displayName}"...`, 'Giải nén cấu trúc OOXML & font nhúng vào RAM');
+// Phân tích và tải bài giảng
+async function loadPresentation(rawBuffer, displayName = 'Presentation') {
+  showLoading(`Đang phân tích "${displayName}"...`, 'Kiểm tra và chuẩn hóa cấu trúc OOXML');
   try {
     const t0 = performance.now();
+
+    // 1. Chuẩn hóa buffer
+    const buffer = normalizePresentationBuffer(rawBuffer);
+
+    // 2. Parse cấu trúc OOXML
+    showLoading(`Đang phân tích "${displayName}"...`, 'Giải nén cấu trúc OOXML & font nhúng vào RAM');
     const pres = await parse(buffer);
     const duration = Math.round(performance.now() - t0);
 
-    // Clean up previous viewer
+    // 3. Dọn dẹp viewer cũ
     if (currentViewer) {
       currentViewer.destroy();
       currentViewer = null;
     }
     stage.innerHTML = '';
 
-    // Inject fonts
+    // 4. Nạp font nhúng
     injectEmbeddedFonts(pres);
 
-    // Initialize Viewer with stage, pres
+    // 5. Khởi tạo Viewer mới
     currentViewer = new Viewer(stage, pres);
 
     currentPres = pres;
     mediaSlideIndices = scanMediaSlides(pres);
     currentMediaPointer = 0;
 
-    // Update Header and Counter
+    // 6. Cập nhật giao diện
     presTitle.textContent = displayName;
     presTitle.title = displayName;
     totalSlideNum.textContent = pres.slides.length;
     currentSlideNum.textContent = '1';
     sidebarCount.textContent = `${pres.slides.length} slides`;
 
-    // Setup Media Jump Button
+    // Thiết lập nút nhảy Media
     if (mediaSlideIndices.length > 0) {
       btnMediaJump.style.display = 'inline-flex';
       mediaJumpText.textContent = `Slide ${mediaSlideIndices[0] + 1} (${mediaSlideIndices.length} Media)`;
@@ -140,27 +204,27 @@ async function loadPresentation(buffer, displayName = 'Presentation') {
       btnMediaJump.style.display = 'none';
     }
 
-    // Render Thumbnails
+    // 7. Tạo danh sách slide thu nhỏ
     renderThumbnails(pres);
 
-    // Listen to Viewer Slide Changes
+    // 8. Lắng nghe sự kiện chuyển slide
     currentViewer.onChange = (idx) => {
       currentSlideNum.textContent = idx + 1;
       updateActiveThumbnail(idx);
     };
 
-    // Switch view to presentation mode
+    // Chuyển sang màn hình trình chiếu
     welcomeView.style.display = 'none';
     presentationView.style.display = 'flex';
     hideLoading();
   } catch (err) {
     console.error('Error loading presentation:', err);
     hideLoading();
-    alert(`Không thể đọc file PowerPoint: ${err.message}`);
+    alert(`Lỗi phân tích bài giảng:\n${err.message}`);
   }
 }
 
-// Render Slide Thumbnails
+// Render Thumbnails
 function renderThumbnails(pres) {
   thumbList.innerHTML = '';
   pres.slides.forEach((slide, idx) => {
@@ -203,7 +267,7 @@ function updateActiveThumbnail(activeIdx) {
   });
 }
 
-// Load presentation from URL
+// Tải từ URL
 async function loadFromUrl(url, displayName = null) {
   const name = displayName || url.split('/').pop().split('?')[0] || 'Presentation';
   showLoading(`Đang tải "${name}"...`, 'Tải dữ liệu bài giảng từ server/CDN');
@@ -214,11 +278,11 @@ async function loadFromUrl(url, displayName = null) {
     await loadPresentation(buffer, name);
   } catch (err) {
     hideLoading();
-    alert(`Lỗi tải bài giảng: ${err.message}`);
+    alert(`Lỗi tải bài giảng:\n${err.message}`);
   }
 }
 
-// Close current presentation and return to Welcome Screen
+// Đóng bài giảng
 function closePresentation() {
   if (currentViewer) {
     currentViewer.destroy();
@@ -232,7 +296,7 @@ function closePresentation() {
   welcomeView.style.display = 'flex';
 }
 
-// Toggle Fullscreen
+// Bật tắt toàn màn hình
 function toggleFullscreen() {
   if (!document.fullscreenElement) {
     const elem = stageWrapper || document.documentElement;
@@ -275,16 +339,29 @@ btnMediaJump.addEventListener('click', () => {
   mediaJumpText.textContent = `Slide ${mediaSlideIndices[currentMediaPointer] + 1}`;
 });
 
-// File Input Picker
+// Mở File Picker qua các nút
+btnHeaderOpen?.addEventListener('click', () => fileInput.click());
+btnChooseFile?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  fileInput.click();
+});
+dropZone?.addEventListener('click', () => fileInput.click());
+
+// Xử lý khi người dùng chọn file từ máy
 fileInput.addEventListener('change', async (e) => {
-  const file = e.target.files[0];
+  const file = e.target.files && e.target.files[0];
   if (!file) return;
-  const buffer = await file.arrayBuffer();
-  await loadPresentation(buffer, file.name);
-  fileInput.value = '';
+  try {
+    const buffer = await file.arrayBuffer();
+    await loadPresentation(buffer, file.name);
+  } catch (err) {
+    alert(`Không thể đọc file: ${err.message}`);
+  } finally {
+    fileInput.value = '';
+  }
 });
 
-// Drag & Drop
+// Drag & Drop cho vùng Upload Box
 if (dropZone) {
   ['dragenter', 'dragover'].forEach(name => {
     dropZone.addEventListener(name, (e) => {
@@ -301,20 +378,22 @@ if (dropZone) {
   });
 
   dropZone.addEventListener('drop', async (e) => {
-    const file = e.dataTransfer.files[0];
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
     if (!file) return;
     const buffer = await file.arrayBuffer();
     await loadPresentation(buffer, file.name);
   });
 }
 
-// Window Drag & Drop
+// Window Drag & Drop (thả vào bất kỳ đâu trên trang)
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
   if (e.target.closest('#dropZone')) return;
-  const file = e.dataTransfer.files[0];
-  if (file && (file.name.endsWith('.pptx') || file.name.endsWith('.zip'))) {
+  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) {
     const buffer = await file.arrayBuffer();
     await loadPresentation(buffer, file.name);
   }
@@ -332,7 +411,7 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// Sample click handlers (Dropdown and Welcome cards)
+// Sample click handlers
 document.querySelectorAll('[data-sample]').forEach(el => {
   el.addEventListener('click', (e) => {
     e.preventDefault();
@@ -345,7 +424,6 @@ document.querySelectorAll('[data-sample]').forEach(el => {
 
 // Keyboard Navigation
 window.addEventListener('keydown', (e) => {
-  // If help modal is open
   if (modalHelp.style.display === 'flex') {
     if (e.key === 'Escape') modalHelp.style.display = 'none';
     return;
@@ -390,7 +468,7 @@ modalHelp.addEventListener('click', (e) => {
   if (e.target === modalHelp) modalHelp.style.display = 'none';
 });
 
-// URL Param Handler on Init
+// Khởi tạo từ URL params
 async function init() {
   const params = new URLSearchParams(window.location.search);
   const fileParam = params.get('file') || params.get('url');
@@ -406,14 +484,12 @@ async function init() {
   }
 
   if (folderParam) {
-    // Local server streaming compatibility
     await loadFromUrl(`/api/v1/xml-folder/${encodeURIComponent(folderParam)}/stream`, `Folder: ${folderParam}`);
   } else if (fileParam) {
     await loadFromUrl(fileParam);
   } else if (sampleParam) {
     await loadFromUrl(`samples/${sampleParam}.pptx`, `Sample: ${sampleParam}`);
   }
-  // Otherwise remains on the clean Welcome Screen for users to drop/open any file!
 }
 
 window.addEventListener('DOMContentLoaded', init);

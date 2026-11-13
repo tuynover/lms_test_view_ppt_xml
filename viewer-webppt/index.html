@@ -55,11 +55,10 @@
         </div>
 
         <!-- Open File Button -->
-        <label class="btn btn-primary" title="Mở file PPTX từ máy tính">
+        <button class="btn btn-primary" id="btnHeaderOpen" type="button" title="Mở file PPTX từ máy tính">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           <span>Mở file PPTX</span>
-          <input type="file" id="fileInput" accept=".pptx,.zip" style="display:none" />
-        </label>
+        </button>
 
         <!-- Fullscreen Button -->
         <button id="btnFullscreen" class="btn btn-icon" title="Toàn màn hình (F)">
@@ -98,7 +97,7 @@
             </div>
             <h3>Kéo và thả file bài giảng vào đây</h3>
             <p>Hỗ trợ file <code>.pptx</code> hoặc <code>.zip</code> chứa bài giảng PowerPoint</p>
-            <button class="btn btn-primary btn-large" onclick="document.getElementById('fileInput').click()">
+            <button class="btn btn-primary btn-large" id="btnChooseFile" type="button">
               Chọn file từ thiết bị
             </button>
             <div class="upload-privacy-note">
@@ -258,6 +257,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Hidden standalone file input -->
+  <input type="file" id="fileInput" accept=".pptx,.zip,.ppt,.ppsx" style="display:none;" />
 
   <script type="module" src="./src/main.js"></script>
 </body>
