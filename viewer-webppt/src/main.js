@@ -1,7 +1,13 @@
 import { parse, setFontDecoder } from '@web-ppt/core';
+import { enableEmfPlus } from '@web-ppt/core/emf-plus';
+import { enableThreeD } from '@web-ppt/core/three-d';
 import { eotToTtf } from 'mtx-decompressor';
 import { Viewer } from '@web-ppt/viewer-core';
 import * as fflate from 'fflate';
+
+// Kích hoạt giải mã đồ họa vector EMF / WMF / EMF+ và 3D Mesh
+enableEmfPlus();
+enableThreeD();
 
 // Kích hoạt giải mã font nhúng .fntdata (MicroType Express sang TrueType)
 setFontDecoder(eotToTtf);
@@ -21,6 +27,7 @@ const btnToggleSidebar = document.getElementById('btnToggleSidebar');
 const btnPrev = document.getElementById('btnPrev');
 const btnNext = document.getElementById('btnNext');
 const btnPlayStep = document.getElementById('btnPlayStep');
+const btnSkipAnim = document.getElementById('btnSkipAnim');
 const btnFullscreen = document.getElementById('btnFullscreen');
 const btnDockFullscreen = document.getElementById('btnDockFullscreen');
 const btnClosePresentation = document.getElementById('btnClosePresentation');
@@ -71,7 +78,7 @@ function isLegacyBinaryPpt(u8) {
     u8[4] === 0xA1 && u8[5] === 0xB1 && u8[6] === 0x1A && u8[7] === 0xE1;
 }
 
-// Chuẩn hóa bộ đệm PPTX/ZIP (Gỡ bỏ thư mục lồng nếu người dùng nén cả folder)
+// Chuẩn hóa bộ đệm PPTX/ZIP (Gỡ bỏ thư mục lồng, chuẩn hóa định dạng ảnh JFIF -> JPEG)
 function normalizePresentationBuffer(rawBuffer) {
   const u8 = new Uint8Array(rawBuffer);
 
@@ -84,22 +91,42 @@ function normalizePresentationBuffer(rawBuffer) {
     const unzipped = fflate.unzipSync(u8);
     const keys = Object.keys(unzipped);
 
-    // Nếu cấu trúc gốc đã có ppt/presentation.xml thì dùng luôn
-    if (keys.includes('ppt/presentation.xml')) {
-      return rawBuffer;
-    }
-
-    // Nếu file ZIP chứa một thư mục lồng (ví dụ: "TenFolder/ppt/presentation.xml")
+    // Kiểm tra xem có cần chuẩn hóa tiền tố thư mục lồng hay đổi đuôi .jfif sang .jpeg
     const presKey = keys.find(k => k.endsWith('/ppt/presentation.xml') || k === 'ppt/presentation.xml');
-    if (presKey) {
-      const prefix = presKey.slice(0, presKey.indexOf('ppt/presentation.xml'));
-      console.log('Phát hiện ZIP bị lồng thư mục con. Tự động bóc tách tiền tố:', prefix);
+    const hasJfif = keys.some(k => k.toLowerCase().endsWith('.jfif'));
+    const needsPrefixStrip = presKey && presKey !== 'ppt/presentation.xml';
+
+    if (needsPrefixStrip || hasJfif) {
+      const prefix = needsPrefixStrip ? presKey.slice(0, presKey.indexOf('ppt/presentation.xml')) : '';
+      console.log('Chuẩn hóa package OOXML: gỡ tiền tố lồng =', prefix || 'không có', ', xử lý ảnh JFIF =', hasJfif);
       const normalized = {};
+
       for (const [key, val] of Object.entries(unzipped)) {
-        if (key.startsWith(prefix) && key.length > prefix.length) {
-          normalized[key.slice(prefix.length)] = val;
+        let cleanKey = key;
+        if (prefix && key.startsWith(prefix) && key.length > prefix.length) {
+          cleanKey = key.slice(prefix.length);
+        } else if (prefix && !key.startsWith(prefix)) {
+          continue;
         }
+
+        let finalKey = cleanKey;
+        if (cleanKey.toLowerCase().endsWith('.jfif')) {
+          finalKey = cleanKey.replace(/\.jfif$/i, '.jpeg');
+        }
+
+        // Nếu là file XML hoặc .rels, thay thế tham chiếu .jfif sang .jpeg
+        if (cleanKey.endsWith('.xml') || cleanKey.endsWith('.rels')) {
+          const text = fflate.strFromU8(val);
+          if (text.includes('.jfif') || text.includes('.JFIF')) {
+            const replaced = text.replace(/\.jfif/gi, '.jpeg');
+            normalized[finalKey] = fflate.strToU8(replaced);
+            continue;
+          }
+        }
+
+        normalized[finalKey] = val;
       }
+
       const rezipped = fflate.zipSync(normalized, { level: 0 });
       return rezipped.buffer;
     }
@@ -175,7 +202,12 @@ function sanitizePresentation(pres) {
         if (isTransparent && hasNoStroke) {
           el.path = null;
           if (el.scene3d) delete el.scene3d;
-          if (el.effects) delete el.effects;
+          if (el.effects?.shadow) delete el.effects.shadow;
+        }
+
+        // Khử lỗi softEdge xóa mờ làm mất chữ trên các shape trong suốt
+        if (isTransparent && el.text && el.effects?.softEdge) {
+          delete el.effects.softEdge;
         }
       } else if (el.kind === 'group' && el.children) {
         sanitizeElements(el.children);
@@ -218,9 +250,10 @@ async function loadPresentation(rawBuffer, displayName = 'Presentation') {
     // 4. Nạp font nhúng
     injectEmbeddedFonts(pres);
 
-    // 5. Khởi tạo Viewer mới (bật chế độ player để nhúng <video>/<audio> tương tác)
+    // 5. Khởi tạo Viewer mới (bật chế độ player để nhúng <video>/<audio> tương tác, bật animate để giữ toàn bộ animation & transition)
     currentViewer = new Viewer(stage, pres, {
-      media: 'player'
+      media: 'player',
+      animate: true
     });
 
     currentPres = pres;
@@ -392,6 +425,19 @@ function toggleFullscreen() {
 btnPrev.addEventListener('click', () => currentViewer?.prev());
 btnNext.addEventListener('click', () => currentViewer?.next());
 btnPlayStep.addEventListener('click', () => {
+  if (currentViewer) {
+    if (!currentViewer.playNextAnimation()) currentViewer.next();
+  }
+});
+btnSkipAnim?.addEventListener('click', () => {
+  if (currentViewer) {
+    currentViewer.finishAnimations();
+  }
+});
+
+// Bấm vào màn hình slide để kích hoạt bước animation tiếp theo hoặc chuyển slide
+stage.addEventListener('click', (e) => {
+  if (e.target.closest('video, audio, button, a, input, select, textarea, [data-media-toggle]')) return;
   if (currentViewer) {
     if (!currentViewer.playNextAnimation()) currentViewer.next();
   }
